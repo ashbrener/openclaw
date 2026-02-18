@@ -1,0 +1,18 @@
+{
+  "name": "@openclaw/workspace-sync",
+  "version": "2026.2.9",
+  "private": true,
+  "description": "Bidirectional workspace cloud sync via rclone (Dropbox, Google Drive, S3, OneDrive, 70+ providers)",
+  "type": "module",
+  "dependencies": {
+    "@clack/prompts": "^1.0.1"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
