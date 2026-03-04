@@ -1,6 +1,6 @@
 # OpenClaw Workspace Cloud Sync Plugin
 
-Bidirectional workspace sync between your OpenClaw agent and cloud storage via [rclone](https://rclone.org/).
+Sync your OpenClaw agent workspace with cloud storage via [rclone](https://rclone.org/).
 
 Supports **Dropbox, Google Drive, OneDrive, S3/R2/Minio**, and [70+ cloud providers](https://rclone.org/overview/).
 
@@ -8,20 +8,71 @@ Supports **Dropbox, Google Drive, OneDrive, S3/R2/Minio**, and [70+ cloud provid
 
 ```
 Local Machine              Cloud Provider              Remote Gateway
-~/Dropbox/openclaw/    <->    Dropbox/GDrive/etc    <->    <workspace>/shared/
-   (native app)               (any provider)              (rclone bisync)
+~/Dropbox/openclaw/    <-     Dropbox/GDrive/etc    <-     <workspace>/shared/
+   (native app)               (any provider)              (rclone mirror)
 ```
 
-- **Local**: Native cloud app syncs `~/Dropbox/openclaw/` (or equivalent)
-- **Remote**: rclone bisync keeps `<workspace>/shared/` in sync with the cloud
-- **Result**: Drop a file locally, it appears on the remote Gateway (and vice versa)
+The remote gateway workspace is the **source of truth**. Changes made by the agent flow down to your local machine through cloud storage. You can send files to the agent through an optional inbox.
 
 **Zero LLM cost.** All sync operations are pure rclone file operations — they never wake the bot or trigger LLM calls.
+
+## Sync modes
+
+The plugin supports two sync modes. Choose the one that fits your workflow:
+
+| Mode | Direction | Default | Description |
+|------|-----------|---------|-------------|
+| `mirror` | Remote -> Local | **Yes** | One-way sync: workspace mirrors down to local. Safe — local can never overwrite remote. |
+| `bisync` | Bidirectional | — | Full two-way sync. Powerful but requires careful setup. |
+
+### `mirror` mode (recommended)
+
+The agent workspace is the source of truth. Every sync cycle copies the latest workspace state down to your local folder. Local files outside the workspace are never sent up.
+
+This is the safest mode: even if something goes wrong, only your local copy is affected — the workspace stays untouched.
+
+### `ingest` option
+
+Want to send files to the agent? Enable `ingest`. This creates a local `inbox/` folder that syncs one-way **up** to the workspace. Drop a file in the inbox — it appears on the remote workspace. The inbox is separate from the mirror, so there is no risk of overwriting workspace files.
+
+```json
+{
+  "mode": "mirror",
+  "ingest": true,
+  "ingestPath": "inbox"
+}
+```
+
+### `bisync` mode (advanced)
+
+Full bidirectional sync using rclone bisync. Changes on either side propagate to the other.
+
+Use this only if you understand the trade-offs:
+
+- Both sides must be in a known-good state before starting
+- A `--resync` is required once to establish the baseline — and it copies **everything**
+- If bisync state is lost (e.g., after a deploy that wipes ephemeral storage), you must `--resync` again
+- Deleted files can reappear if the other side still has them during a resync
+- On container platforms (Fly.io, Railway), bisync state lives in ephemeral storage and is lost on every deploy
+
+If you are running on a container platform, `mirror` mode is strongly recommended.
+
+## Setup sequence
+
+Getting sync right depends on doing things in the right order:
+
+1. **Configure the plugin** in `openclaw.json` with your provider credentials and `mode`
+2. **Verify the remote** is accessible: `openclaw workspace-sync status`
+3. **Run a dry-run first**: `openclaw workspace-sync sync --dry-run`
+4. **Run the first sync**: `openclaw workspace-sync sync`
+5. **Enable periodic sync** by setting `interval` in your config
+
+Take care when changing config (switching `remotePath`, `localPath`, or `mode`) — always disable periodic sync first, verify the new paths, then re-enable.
 
 ## Install
 
 ```bash
-openclaw plugins install @openclaw/workspace-sync
+openclaw plugins install openclaw-workspace-sync
 ```
 
 Or clone into your extensions directory:
@@ -36,16 +87,17 @@ cd workspace-sync && npm install --omit=dev
 
 ```bash
 # Interactive setup wizard (recommended)
-openclaw workspace setup
+openclaw workspace-sync setup
 ```
 
 The setup wizard guides you through:
 1. Checking/installing rclone
 2. Selecting cloud provider
-3. Dropbox app folder option (for scoped access)
-4. Background sync interval
-5. OAuth authorization
-6. First sync
+3. Choosing sync mode
+4. Dropbox app folder option (for scoped access)
+5. Background sync interval
+6. OAuth authorization
+7. First sync
 
 Or configure manually — see [Configuration](#configuration) below.
 
@@ -57,16 +109,17 @@ Add to your `openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "workspace-sync": {
+      "openclaw-workspace-sync": {
         "enabled": true,
         "config": {
           "provider": "dropbox",
+          "mode": "mirror",
           "remotePath": "openclaw-share",
           "localPath": "shared",
           "interval": 300,
+          "timeout": 1800,
           "onSessionStart": true,
           "onSessionEnd": false,
-          "conflictResolve": "newer",
           "exclude": [".git/**", "node_modules/**", "*.log"]
         }
       }
@@ -80,18 +133,20 @@ Add to your `openclaw.json`:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `provider` | string | `"off"` | `dropbox` \| `gdrive` \| `onedrive` \| `s3` \| `custom` \| `off` |
+| `mode` | string | `"mirror"` | `mirror` \| `bisync` — see [Sync modes](#sync-modes) |
+| `ingest` | boolean | `false` | Enable local inbox for sending files to the agent |
+| `ingestPath` | string | `"inbox"` | Local subfolder name for ingestion (relative to `localPath`) |
 | `remotePath` | string | `"openclaw-share"` | Folder name in cloud storage |
 | `localPath` | string | `"shared"` | Subfolder within workspace to sync |
 | `interval` | number | `0` | Background sync interval in seconds (0 = manual only, min 60) |
+| `timeout` | number | `1800` | Max seconds for a single rclone sync operation (min 60) |
 | `onSessionStart` | boolean | `false` | Sync when an agent session begins |
 | `onSessionEnd` | boolean | `false` | Sync when an agent session ends |
 | `remoteName` | string | `"cloud"` | rclone remote name |
 | `configPath` | string | auto | Path to rclone.conf |
-| `conflictResolve` | string | `"newer"` | `newer` \| `local` \| `remote` |
-| `exclude` | string[] | see below | Glob patterns to exclude |
+| `conflictResolve` | string | `"newer"` | `newer` \| `local` \| `remote` (bisync only) |
+| `exclude` | string[] | `**/.DS_Store` | Glob patterns to exclude |
 | `copySymlinks` | boolean | `false` | Follow symlinks during sync |
-
-Default excludes: `.git/**`, `node_modules/**`, `.venv/**`, `__pycache__/**`, `*.log`, `.DS_Store`
 
 ### Provider-specific options
 
@@ -126,41 +181,58 @@ Default excludes: `.git/**`, `node_modules/**`, `.venv/**`, `__pycache__/**`, `*
 }
 ```
 
+**Any rclone backend (SFTP, B2, Mega, pCloud, etc.):**
+
+```json
+{
+  "provider": "custom",
+  "remotePath": "openclaw-sync",
+  "custom": {
+    "rcloneType": "sftp",
+    "rcloneOptions": {
+      "host": "example.com",
+      "user": "deploy",
+      "key_file": "/path/to/key"
+    }
+  }
+}
+```
+
 ## CLI commands
 
 ```bash
 # Interactive setup wizard
-openclaw workspace setup
+openclaw workspace-sync setup
 
 # Check sync status
-openclaw workspace status
+openclaw workspace-sync status
 
-# Sync bidirectionally
-openclaw workspace sync
-
-# First sync (required once to establish baseline)
-openclaw workspace sync --resync
+# Sync (behavior depends on mode)
+openclaw workspace-sync sync
 
 # Preview changes without syncing
-openclaw workspace sync --dry-run
+openclaw workspace-sync sync --dry-run
 
-# One-way sync
-openclaw workspace sync --direction pull   # remote -> local
-openclaw workspace sync --direction push   # local -> remote
+# One-way sync (explicit, overrides mode for this run)
+openclaw workspace-sync sync --direction pull   # remote -> local
+openclaw workspace-sync sync --direction push   # local -> remote
+
+# Force re-establish bisync baseline (bisync mode only)
+openclaw workspace-sync sync --resync
 
 # Authorize with cloud provider
-openclaw workspace authorize
-openclaw workspace authorize --provider gdrive
+openclaw workspace-sync authorize
+openclaw workspace-sync authorize --provider gdrive
 
 # List remote files
-openclaw workspace list
+openclaw workspace-sync list
 ```
 
 ## Auto-sync
 
 ### Session hooks
 
-Sync automatically when sessions start or end. These run during existing agent activity and incur zero LLM cost:
+Sync automatically when sessions start or end (zero LLM cost):
 
 ```json
 {
@@ -175,17 +247,18 @@ Set `interval` to enable automatic background sync (in seconds):
 
 ```json
 {
-  "interval": 300
+  "interval": 300,
+  "timeout": 3600
 }
 ```
 
-The gateway runs rclone bisync in the background at this interval. Minimum interval is 60 seconds.
+In `mirror` mode, periodic sync pulls the latest workspace state down to local. In `bisync` mode, it runs a full bidirectional sync.
 
 ### External cron (alternative)
 
 ```bash
 # Add to crontab (crontab -e)
-*/5 * * * * openclaw workspace sync >> /var/log/openclaw-sync.log 2>&1
+*/5 * * * * openclaw workspace-sync sync >> /var/log/openclaw-sync.log 2>&1
 ```
 
 ## Supported providers
@@ -200,41 +273,31 @@ The gateway runs rclone bisync in the background at this interval. Minimum inter
 
 For the full list of 70+ providers, see [rclone overview](https://rclone.org/overview/).
 
-## Manual setup (without wizard)
+## Understanding sync safety
 
-### 1. Install rclone
+Cloud sync involves two copies of your data. When things go wrong, one side can overwrite the other. Here is what to keep in mind:
 
-- **macOS**: `brew install rclone`
-- **Linux**: `curl -s https://rclone.org/install.sh | sudo bash`
-- **Docker**: `RUN curl -s https://rclone.org/install.sh | bash`
+**Mirror mode is safe by design.** The remote workspace is the authority. Local is a read-only copy. Even if your local folder is empty, stale, or corrupted, the next sync just re-downloads the workspace. The agent's work is never affected by local state.
 
-### 2. Authorize rclone (from your local machine)
+**Bisync requires both sides to agree.** Bisync tracks what changed since the last sync. If that tracking state is lost (deploy, disk wipe, moving to a new machine), rclone does not know what changed and requires a `--resync`. A resync copies everything from both sides — if one side has stale or unwanted files, they propagate to the other.
 
-Run on a machine with a browser:
+**Common pitfalls to avoid:**
+- Changing `remotePath` or `localPath` while periodic sync is enabled
+- Running `--resync` without checking both sides first
+- Using `bisync` on container platforms where state is ephemeral
+- Syncing very large directories (use `exclude` patterns liberally)
 
-```bash
-rclone authorize "dropbox"   # or: gdrive, onedrive
-```
+**If in doubt, use `mirror` mode.** You can always send files to the agent through the inbox, and you get a reliable local copy of the workspace without any risk.
 
-Copy the JSON token it outputs.
+## Important: `--resync` is destructive (bisync only)
 
-### 3. Configure on the Gateway
+**Never use `--resync` unless you know exactly what it does.** It tells rclone to throw away its knowledge of what has changed and do a full reconciliation — it copies every file from both sides. This means:
 
-```bash
-mkdir -p ~/.openclaw/.config/rclone
+- Files you deleted remotely will come back from local (and vice versa)
+- It transfers your **entire** sync scope, not just recent changes
+- On a large workspace, this can take 30+ minutes and fill your disk
 
-cat > ~/.openclaw/.config/rclone/rclone.conf << 'EOF'
-[cloud]
-type = dropbox
-token = {"access_token":"YOUR_TOKEN_HERE","token_type":"bearer","expiry":"..."}
-EOF
-```
-
-### 4. First sync
-
-```bash
-openclaw workspace sync --resync
-```
+The plugin **never** auto-resyncs. If bisync state is lost, it logs a message telling you to run `--resync` manually — only do this after confirming both sides are correct.
 
 ## Dropbox app folder access (recommended)
 
@@ -258,10 +321,10 @@ Benefits:
 ### Token expired
 
 ```bash
-openclaw workspace authorize
+openclaw workspace-sync authorize
 ```
 
-### Conflicts
+### Conflicts (bisync only)
 
 Files modified on both sides get `.conflict` suffix:
 
@@ -269,10 +332,16 @@ Files modified on both sides get `.conflict` suffix:
 find <workspace>/shared -name "*.conflict"
 ```
 
-### First sync fails
+### Stale lock files
 
-```bash
-openclaw workspace sync --resync
+The plugin automatically handles stale rclone lock files. If a sync is interrupted, the next run detects the stale lock, clears it, and retries.
+
+### Sync times out
+
+Increase the `timeout` config (default is 1800s / 30 min):
+
+```json
+{ "timeout": 3600 }
 ```
 
 ### Permission errors
