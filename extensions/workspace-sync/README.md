@@ -354,6 +354,16 @@ Increase the `timeout` config (default is 1800s / 30 min):
 chmod -R 755 <workspace>/shared
 ```
 
+## Deployment recommendations
+
+If you are running OpenClaw on a cloud container (Fly.io, Railway, Render) or a VPS:
+
+- **Use a separate persistent volume for the workspace.** Container root filesystems are ephemeral — a redeploy wipes everything. Mount a dedicated volume (e.g., Fly.io volumes, EBS, DigitalOcean block storage) at your workspace path so data survives deploys and restarts.
+- **Enable daily volume snapshots.** Most cloud providers offer automated snapshots (Fly.io does this by default with 5-day retention). If something goes wrong — a bad sync, accidental deletion, or a failed reorganization — a recent snapshot lets you restore in minutes instead of rebuilding from scratch.
+- **Test your restore process.** A backup you have never restored is a backup you do not have. Create a volume from a snapshot at least once to confirm the process works and you know the steps.
+
+These recommendations apply regardless of whether you use this plugin. Cloud sync adds convenience but is not a substitute for proper backups.
+
 ## Security notes
 
 - **Token storage**: rclone tokens are stored in `rclone.conf` with `0600` permissions
