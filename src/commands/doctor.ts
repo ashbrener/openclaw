@@ -26,10 +26,11 @@ import {
   maybeRepairAnthropicOAuthProfileId,
   noteAuthProfileHealth,
 } from "./doctor-auth.js";
+import { noteBootstrapFileSize } from "./doctor-bootstrap-size.js";
 import { doctorShellCompletion } from "./doctor-completion.js";
 import { loadAndMaybeMigrateDoctorConfig } from "./doctor-config-flow.js";
 import { maybeRepairGatewayDaemon } from "./doctor-gateway-daemon-flow.js";
-import { checkGatewayHealth } from "./doctor-gateway-health.js";
+import { checkGatewayHealth, probeGatewayMemoryStatus } from "./doctor-gateway-health.js";
 import {
   maybeRepairGatewayServiceConfig,
   maybeScanExtraGatewayServices,
@@ -40,6 +41,7 @@ import {
   noteMacLaunchAgentOverrides,
   noteMacLaunchctlGatewayEnvOverrides,
   noteDeprecatedLegacyEnvVars,
+  noteStartupOptimizationHints,
 } from "./doctor-platform-notes.js";
 import { createDoctorPrompter, type DoctorOptions } from "./doctor-prompter.js";
 import { maybeRepairSandboxImages, noteSandboxScopeWarnings } from "./doctor-sandbox.js";
@@ -54,6 +56,7 @@ import { maybeRepairUiProtocolFreshness } from "./doctor-ui.js";
 import { maybeOfferUpdateBeforeDoctor } from "./doctor-update.js";
 import { noteWorkspaceStatus } from "./doctor-workspace-status.js";
 import { MEMORY_SYSTEM_PROMPT, shouldSuggestMemorySystem } from "./doctor-workspace.js";
+import { noteOpenAIOAuthTlsPrerequisites } from "./oauth-tls-preflight.js";
 import { applyWizardMetadata, printWizardHeader, randomToken } from "./onboard-helpers.js";
 import { ensureSystemdUserLingerInteractive } from "./systemd-linger.js";
 
@@ -92,12 +95,15 @@ export async function doctorCommand(
   await maybeRepairUiProtocolFreshness(runtime, prompter);
   noteSourceInstallIssues(root);
   noteDeprecatedLegacyEnvVars();
+  noteStartupOptimizationHints();
 
   const configResult = await loadAndMaybeMigrateDoctorConfig({
     options,
     confirm: (p) => prompter.confirm(p),
   });
   let cfg: OpenClawConfig = configResult.cfg;
+  const cfgForPersistence = structuredClone(cfg);
+  const sourceConfigValid = configResult.sourceConfigValid ?? true;
 
   const configPath = configResult.path ?? CONFIG_PATH;
   if (!cfg.gateway?.mode) {
@@ -123,7 +129,7 @@ export async function doctorCommand(
   if (gatewayDetails.remoteFallbackNote) {
     note(gatewayDetails.remoteFallbackNote, "Gateway");
   }
-  if (resolveMode(cfg) === "local") {
+  if (resolveMode(cfg) === "local" && sourceConfigValid) {
     const auth = resolveGatewayAuth({
       authConfig: cfg.gateway?.auth,
       tailscaleMode: cfg.gateway?.tailscale?.mode ?? "off",
@@ -196,6 +202,10 @@ export async function doctorCommand(
   await noteMacLaunchctlGatewayEnvOverrides(cfg);
 
   await noteSecurityWarnings(cfg);
+  await noteOpenAIOAuthTlsPrerequisites({
+    cfg,
+    deep: options.deep === true,
+  });
 
   if (cfg.hooks?.gmail?.model?.trim()) {
     const hooksModelRef = resolveHooksGmailModel({
@@ -262,7 +272,7 @@ export async function doctorCommand(
   }
 
   noteWorkspaceStatus(cfg);
-  await noteMemorySearchHealth(cfg);
+  await noteBootstrapFileSize(cfg);
 
   // Check and fix shell completion
   await doctorShellCompletion(runtime, prompter, {
@@ -274,6 +284,13 @@ export async function doctorCommand(
     cfg,
     timeoutMs: options.nonInteractive === true ? 3000 : 10_000,
   });
+  const gatewayMemoryProbe = healthOk
+    ? await probeGatewayMemoryStatus({
+        cfg,
+        timeoutMs: options.nonInteractive === true ? 3000 : 10_000,
+      })
+    : { checked: false, ready: false };
+  await noteMemorySearchHealth(cfg, { gatewayMemoryProbe });
   await maybeRepairGatewayDaemon({
     cfg,
     runtime,
@@ -283,7 +300,8 @@ export async function doctorCommand(
     healthOk,
   });
 
-  const shouldWriteConfig = prompter.shouldRepair || configResult.shouldWriteConfig;
+  const shouldWriteConfig =
+    configResult.shouldWriteConfig || JSON.stringify(cfg) !== JSON.stringify(cfgForPersistence);
   if (shouldWriteConfig) {
     cfg = applyWizardMetadata(cfg, { command: "doctor", mode: resolveMode(cfg) });
     await writeConfigFile(cfg);
@@ -292,7 +310,7 @@ export async function doctorCommand(
     if (fs.existsSync(backupPath)) {
       runtime.log(`Backup: ${shortenHomePath(backupPath)}`);
     }
-  } else {
+  } else if (!prompter.shouldRepair) {
     runtime.log(`Run "${formatCliCommand("openclaw doctor --fix")}" to apply changes.`);
   }
 
