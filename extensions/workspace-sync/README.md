@@ -16,14 +16,18 @@ The remote gateway workspace is the **source of truth**. Changes made by the age
 
 **Zero LLM cost.** All sync operations are pure rclone file operations — they never wake the bot or trigger LLM calls.
 
-## Sync modes
+## Sync modes (breaking change in v2.0)
+
+**`mode` is now required.** Previous versions used bidirectional bisync implicitly. Starting with v2.0, you must explicitly set `"mode"` in your config. The plugin will refuse to start and log an error until `mode` is set. This prevents accidental data loss from an unexpected sync direction.
 
 The plugin supports two sync modes. Choose the one that fits your workflow:
 
-| Mode | Direction | Default | Description |
-|------|-----------|---------|-------------|
-| `mirror` | Remote -> Local | **Yes** | One-way sync: workspace mirrors down to local. Safe — local can never overwrite remote. |
-| `bisync` | Bidirectional | — | Full two-way sync. Powerful but requires careful setup. |
+| Mode | Direction | Description |
+|------|-----------|-------------|
+| `mirror` | Remote -> Local | One-way sync: workspace mirrors down to local. Safe — local can never overwrite remote. **Recommended.** |
+| `bisync` | Bidirectional | Full two-way sync. Powerful but requires careful setup. |
+
+**Upgrading from a previous version?** If you were using bisync before, add `"mode": "bisync"` to your config to preserve the existing behavior. If you want the safer default, use `"mode": "mirror"` instead.
 
 ### `mirror` mode (recommended)
 
@@ -133,7 +137,7 @@ Add to your `openclaw.json`:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `provider` | string | `"off"` | `dropbox` \| `gdrive` \| `onedrive` \| `s3` \| `custom` \| `off` |
-| `mode` | string | `"mirror"` | `mirror` \| `bisync` — see [Sync modes](#sync-modes) |
+| `mode` | string | **required** | `mirror` \| `bisync` — see [Sync modes](#sync-modes-breaking-change-in-v20) |
 | `ingest` | boolean | `false` | Enable local inbox for sending files to the agent |
 | `ingestPath` | string | `"inbox"` | Local subfolder name for ingestion (relative to `localPath`) |
 | `remotePath` | string | `"openclaw-share"` | Folder name in cloud storage |

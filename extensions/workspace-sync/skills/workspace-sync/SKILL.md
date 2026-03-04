@@ -6,7 +6,7 @@ metadata: {"openclaw":{"emoji":"☁️","requires":{"bins":["rclone"]}}}
 
 # workspace-sync
 
-Sync the agent workspace with cloud storage. The default `mirror` mode treats the remote workspace as the source of truth and syncs it down to local. An optional `inbox` folder lets users send files up to the agent.
+Sync the agent workspace with cloud storage. `mode` is required — choose `mirror` (remote->local, recommended) or `bisync` (bidirectional, advanced). An optional `inbox` folder lets users send files up to the agent.
 
 ## Trigger
 
@@ -99,7 +99,7 @@ Workspace sync is configured via the plugin entry in `openclaw.json`:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `provider` | `"off"` | `dropbox`, `gdrive`, `onedrive`, `s3`, `custom`, or `off` |
-| `mode` | `"mirror"` | `mirror` (remote->local) or `bisync` (bidirectional) |
+| `mode` | **required** | `mirror` (remote->local) or `bisync` (bidirectional) |
 | `ingest` | `false` | Enable local inbox for sending files to the agent |
 | `ingestPath` | `"inbox"` | Local subfolder name for ingestion |
 | `remotePath` | `"openclaw-share"` | Folder name in cloud storage |
@@ -147,7 +147,7 @@ rclone ls cloud:openclaw-share
 
 ## Notes
 
-- Default mode is `mirror` (remote->local, safest)
+- `mode` is **required** — set `mirror` (remote->local) or `bisync` (bidirectional)
 - Bisync is available for power users who need bidirectional sync
 - Ingest inbox is additive only — cannot delete remote files
 - Only `**/.DS_Store` excluded by default — add your own excludes in config
