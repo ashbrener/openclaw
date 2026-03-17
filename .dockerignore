@@ -34,6 +34,7 @@ tmp
 # build artifacts
 dist
 **/dist
+!.local/bots/*/plugins/*/dist
 apps/macos/.build
 apps/ios/build
 **/*.trace
