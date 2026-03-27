@@ -636,6 +636,16 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  extensions/workspace-sync:
+    dependencies:
+      '@clack/prompts':
+        specifier: ^1.0.1
+        version: 1.1.0
+    devDependencies:
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
+
   extensions/xai: {}
 
   extensions/xiaomi: {}
