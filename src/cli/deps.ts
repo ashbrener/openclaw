@@ -1,4 +1,5 @@
 import type { OutboundSendDeps } from "../infra/outbound/send-deps.js";
+import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { createOutboundSendDepsFromCliSource } from "./outbound-send-mapping.js";
 
 /**
@@ -24,10 +25,11 @@ function createLazySender(
   channelId: string,
   loader: () => Promise<RuntimeSendModule>,
 ): (...args: unknown[]) => Promise<unknown> {
+  const loadRuntimeSend = createLazyRuntimeSurface(loader, ({ runtimeSend }) => runtimeSend);
   return async (...args: unknown[]) => {
     let cached = senderCache.get(channelId);
     if (!cached) {
-      cached = loader().then(({ runtimeSend }) => runtimeSend);
+      cached = loadRuntimeSend();
       senderCache.set(channelId, cached);
     }
     const runtimeSend = await cached;
@@ -36,6 +38,8 @@ function createLazySender(
 }
 
 export function createDefaultDeps(): CliDeps {
+  // Keep the default dependency barrel limited to lazy senders so callers that
+  // only need outbound deps do not pull channel runtime boundaries on import.
   return {
     whatsapp: createLazySender(
       "whatsapp",
@@ -67,5 +71,3 @@ export function createDefaultDeps(): CliDeps {
 export function createOutboundSendDeps(deps: CliDeps): OutboundSendDeps {
   return createOutboundSendDepsFromCliSource(deps);
 }
-
-export { logWebSelfId } from "../plugin-sdk/whatsapp.js";

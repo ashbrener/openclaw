@@ -1,4 +1,5 @@
 type JsonSchemaObject = {
+  type?: string | string[];
   properties?: Record<string, JsonSchemaObject>;
   additionalProperties?: JsonSchemaObject | boolean;
   items?: JsonSchemaObject | JsonSchemaObject[];
@@ -6,6 +7,20 @@ type JsonSchemaObject = {
   allOf?: JsonSchemaObject[];
   oneOf?: JsonSchemaObject[];
 };
+
+export function cloneSchema<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function asSchemaObject<T extends object>(value: unknown): T | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as T;
+}
 
 export function schemaHasChildren(schema: JsonSchemaObject): boolean {
   if (schema.properties && Object.keys(schema.properties).length > 0) {
